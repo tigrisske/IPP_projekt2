@@ -42,6 +42,17 @@ class Instruction:
             if DEBUG:
                 print("Wrong number of arguments for instruction", self.opcode)
             exit(32)
+        # check whether arguments are numbered correctly
+
+        order = 1
+        for arg in self.args:
+            # print('arg order: ', arg.order, 'order:', order)
+            if int(arg.order)!= order:
+                if DEBUG:
+                    print("Wrong order of arguments for instruction", self.opcode)
+                exit(32)
+            order += 1
+
         # TODO this is maybe redundant
         for i in range(len(self.args)):
             if not (instructions_map.ArgTypeEnum.compare_types(self.args[i], self.args[i],
@@ -76,12 +87,20 @@ class Argument:
 
 
 class Interpreter:
-    def __init__(self, parser):
+    def __init__(self, parser,args):
         self.defined_vars = []
         self.defined_vars_names = []
         self.labels = []
         self.data_stack = []
         self.parser = parser
+        self.arithmetic = ['ADD', 'SUB', 'MUL', 'IDIV', 'DIV']
+        self.input = args.input.split('\n')
+        self.read_index = 0
+
+    def is_number_with_optional_minus(self, value):
+        value_str = str(value)
+        pattern = r'^-?\d+$'
+        return bool(re.match(pattern, value_str))
 
     def find_arg(self,argument):
         # if not var is given, original argument is returned
@@ -134,48 +153,72 @@ class Interpreter:
                 self.defined_vars_names.append(instruction.args[0].name)
                 self.defined_vars.append(instruction.args[0])
 
+            if instruction.opcode == 'READ':
+                var = self.find_arg(instruction.args[0])
+                typ = self.find_arg(instruction.args[1])
+                input = self.input[self.read_index]
+                self.set_var(var, input, typ.value)
+                self.read_index += 1
+
             elif instruction.opcode == 'MOVE':
                 var = self.find_arg(instruction.args[0])
                 symb = self.find_arg(instruction.args[1])
                 self.set_var(var, symb.value, symb.arg_type)
 
-            elif instruction.opcode == 'ADD':
+            elif instruction.opcode in self.arithmetic:
                 self.check_arithmetic(instruction)
+                float_flag = self.find_arg(instruction.args[1]).arg_type == 'float'
                 var = self.find_arg(instruction.args[0])
                 symb1 = self.find_arg(instruction.args[1])
                 symb2 = self.find_arg(instruction.args[2])
-                self.set_var(var, int(symb1.value) + int(symb2.value), symb1.arg_type)
-            elif instruction.opcode == 'SUB':
-                self.check_arithmetic(instruction)
-                var = self.find_arg(instruction.args[0])
-                symb1 = self.find_arg(instruction.args[1])
-                symb2 = self.find_arg(instruction.args[2])
-                self.set_var(var, int(symb1.value) - int(symb2.value), symb1.arg_type)
-            elif instruction.opcode == 'MUL':
-                self.check_arithmetic(instruction)
-                var = self.find_arg(instruction.args[0])
-                symb1 = self.find_arg(instruction.args[1])
-                symb2 = self.find_arg(instruction.args[2])
-                self.set_var(var, int(symb1.value) * int(symb2.value), symb1.arg_type)
-            elif instruction.opcode == 'IDIV':
-                self.check_arithmetic(instruction)
-                var = self.find_arg(instruction.args[0])
-                symb1 = self.find_arg(instruction.args[1])
-                symb2 = self.find_arg(instruction.args[2])
-                self.set_var(var, int(symb1.value) // int(symb2.value), symb1.arg_type)
+                if not float_flag:
+                    if not (self.is_number_with_optional_minus(symb1.value) and self.is_number_with_optional_minus(symb2.value)):
+                        if DEBUG:
+                            print("Invalid types for arithmetic operation")
+                            print(symb1.value, symb2.value)
+                        exit(32)
+                    if instruction.opcode == 'ADD':
+                        self.set_var(var, int(symb1.value) + int(symb2.value), symb1.arg_type)
+                    elif instruction.opcode == 'SUB':
+                        self.set_var(var, int(symb1.value) - int(symb2.value), symb1.arg_type)
+                    elif instruction.opcode == 'MUL':
+                        self.set_var(var, int(symb1.value) * int(symb2.value), symb1.arg_type)
+                    elif instruction.opcode == 'IDIV':
+                        if symb2.value == '0':
+                            if DEBUG:
+                                print("Division by zero")
+                            exit(57)
+                        self.set_var(var, int(symb1.value) // int(symb2.value), symb1.arg_type)
+                else:
+                    number1 = float.fromhex(symb1.value)
+                    number2 = float.fromhex(symb2.value)
+                    if instruction.opcode == 'ADD':
+                        self.set_var(var, float.hex(number1 + number2), symb1.arg_type)
+                    elif instruction.opcode == 'SUB':
+                        self.set_var(var, float.hex(number1 - number2), symb1.arg_type)
+                    elif instruction.opcode == 'MUL':
+                        self.set_var(var, float.hex(number1 * number2), symb1.arg_type)
+                    elif instruction.opcode == 'DIV':
+                        if number2 == 0:
+                            if DEBUG:
+                                print("Division by zero")
+                            exit(57)
+                        self.set_var(var, float.hex(number1 // number2), symb1.arg_type)
+
+
             elif instruction.opcode == 'WRITE':
                 symb = self.find_arg(instruction.args[0])
+                if symb.value == 'nil':
+                    print('', end='')
                 if symb.value is not None:
-                    if symb.arg_type == 'string':
-                        print(symb.value, end='')
-                    else:
-                        print(symb.value)
+                    print(symb.value, end='')
 
 
-            #print the defined variables
-            # for arg in self.defined_vars:
-            #     print(arg.name, arg.value, arg.arg_type, arg.frame)
 
+        #print the defined variables
+        if DEBUG:
+            for arg in self.defined_vars:
+                print("debug print:", arg.name, arg.value, arg.arg_type, arg.frame)
 
 class Parser:
     def __init__(self):
@@ -322,7 +365,7 @@ def main():
     parser = Parser()
     args = parser.parse_arguments()
     parser.verify_xml(args.source)
-    interpreter = Interpreter(parser)
+    interpreter = Interpreter(parser,args)
     interpreter.execute()
 
     if DEBUG:
