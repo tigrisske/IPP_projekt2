@@ -47,7 +47,7 @@ class Instruction:
         order = 1
         for arg in self.args:
             # print('arg order: ', arg.order, 'order:', order)
-            if int(arg.order)!= order:
+            if int(arg.order) != order:
                 if DEBUG:
                     print("Wrong order of arguments for instruction", self.opcode)
                 exit(32)
@@ -87,27 +87,38 @@ class Argument:
 
 
 class Interpreter:
-    def __init__(self, parser,args):
+    def __init__(self, parser, args):
         self.defined_vars = []
         self.defined_vars_names = []
         self.labels = []
         self.data_stack = []
         self.parser = parser
         self.arithmetic = ['ADD', 'SUB', 'MUL', 'IDIV', 'DIV']
+        self.relational = ['LT', 'GT', 'EQ']
         self.input = args.input.split('\n')
         self.read_index = 0
+        self.vypis = 1
+
+    def is_hex_string(self, s):
+        try:
+            int(s, 16)
+            return s.startswith("0x") or s.startswith("-0x") or s.startswith("+0x")
+        except ValueError:
+            return False
 
     def is_number_with_optional_minus(self, value):
         value_str = str(value)
         pattern = r'^-?\d+$'
         return bool(re.match(pattern, value_str))
 
-    def find_arg(self,argument):
+    def find_arg(self, argument):
         # if not var is given, original argument is returned
         if argument.big_type != instructions_map.ArgTypeEnum.VARIABLE:
             return argument
         # if var is given, it is searched in defined variables
         for arg in self.defined_vars:
+            if argument.name == arg.name and argument.frame != arg.frame:
+                exit(55)
             if argument.name == arg.name and argument.frame == arg.frame:
                 return arg
         if DEBUG:
@@ -115,6 +126,11 @@ class Interpreter:
             print(argument.name, self.defined_vars)
         exit(54)
 
+    def format_hex_float(self, hex_float_str):
+        hex_float = float.fromhex(hex_float_str)
+        if str(hex_float)[-1] == '0':
+            return f"{hex_float.hex()}"
+        return f"{hex_float.hex()}0"
 
     def check_var(self, arg):
         if arg.arg_type == 'var':
@@ -131,12 +147,28 @@ class Interpreter:
                 arg.value = value
                 arg.arg_type = value_type
 
+    def check_relational(self, instruction):
+        if not (self.find_arg(instruction.args[1]).arg_type == 'int' and
+                self.find_arg(instruction.args[2]).arg_type == 'int') and not (
+                self.find_arg(instruction.args[1]).arg_type == 'bool' and
+                self.find_arg(instruction.args[2]).arg_type == 'bool') and not (
+                self.find_arg(instruction.args[1]).arg_type == 'string' and
+                self.find_arg(instruction.args[2]).arg_type == 'string') and not (
+                self.find_arg(instruction.args[1]).arg_type == 'nil' or
+                self.find_arg(instruction.args[2]).arg_type == 'nil'):
+            if DEBUG:
+                print("Invalid types for relational operation")
+                # print names of variables
+            exit(53)
+
     def check_arithmetic(self, instruction):
-        if not (self.find_arg(instruction.args[1]).arg_type == 'int' and self.find_arg(instruction.args[2]).arg_type == 'int') and not (
-                self.find_arg(instruction.args[1]).arg_type == 'float' and self.find_arg(instruction.args[2]).arg_type == 'float'):
+        if not (self.find_arg(instruction.args[1]).arg_type == 'int' and self.find_arg(
+                instruction.args[2]).arg_type == 'int') and not (
+                self.find_arg(instruction.args[1]).arg_type == 'float' and self.find_arg(
+            instruction.args[2]).arg_type == 'float'):
             if DEBUG:
                 print("Invalid types for arithmetic operation")
-                #print names of variables
+                # print names of variables
                 print()
                 print(self.find_arg(instruction.args[1]).name, self.find_arg(instruction.args[2]).name)
                 print(self.find_arg(instruction.args[1]).arg_type, self.find_arg(instruction.args[2]).arg_type)
@@ -157,6 +189,7 @@ class Interpreter:
                 var = self.find_arg(instruction.args[0])
                 typ = self.find_arg(instruction.args[1])
                 input = self.input[self.read_index]
+
                 self.set_var(var, input, typ.value)
                 self.read_index += 1
 
@@ -172,7 +205,8 @@ class Interpreter:
                 symb1 = self.find_arg(instruction.args[1])
                 symb2 = self.find_arg(instruction.args[2])
                 if not float_flag:
-                    if not (self.is_number_with_optional_minus(symb1.value) and self.is_number_with_optional_minus(symb2.value)):
+                    if not (self.is_number_with_optional_minus(symb1.value) and self.is_number_with_optional_minus(
+                            symb2.value)):
                         if DEBUG:
                             print("Invalid types for arithmetic operation")
                             print(symb1.value, symb2.value)
@@ -205,20 +239,120 @@ class Interpreter:
                             exit(57)
                         self.set_var(var, float.hex(number1 // number2), symb1.arg_type)
 
+            elif instruction.opcode in self.relational:
+                self.check_relational(instruction)
+                var = self.find_arg(instruction.args[0])
+                symb1 = self.find_arg(instruction.args[1])
+                symb2 = self.find_arg(instruction.args[2])
+                if instruction.opcode == 'LT':
+                    if symb1.arg_type == 'int':
+                        bool_str = 'true' if int(symb1.value) < int(symb2.value) else 'false'
+                        self.set_var(var, bool_str, 'bool')
+                    elif symb1.arg_type == 'string':
+                        bool_str = 'true' if symb1.value < symb2.value else 'false'
+                        self.set_var(var, bool_str, 'bool')
+                    elif symb1.arg_type == 'bool':
+                        bool_str = 'true' if symb1.value == 'false' and symb2.value == 'true' else 'false'
+                        self.set_var(var, bool_str, 'bool')
+                    elif symb1.arg_type == 'nil':
+                        exit(53)
+                elif instruction.opcode == 'GT':
+                    if symb1.arg_type == 'int':
+                        bool_str = 'true' if int(symb1.value) > int(symb2.value) else 'false'
+                        self.set_var(var, bool_str, 'bool')
+                    elif symb1.arg_type == 'string':
+                        bool_str = 'true' if symb1.value > symb2.value else 'false'
+                        self.set_var(var, bool_str, 'bool')
+                    elif symb1.arg_type == 'bool':
+                        bool_str = 'true' if symb1.value == 'true' and symb2.value == 'false' else 'false'
+                        self.set_var(var, bool_str, 'bool')
+                    elif symb1.arg_type == 'nil':
+                        exit(53)
+                elif instruction.opcode == 'EQ':
+                    if symb1.arg_type == 'int':
+                        bool_str = 'true' if int(symb1.value) == int(symb2.value) else 'false'
+                        self.set_var(var, bool_str, 'bool')
+                    elif symb1.arg_type == 'string':
+                        bool_str = 'true' if symb1.value == symb2.value else 'false'
+                        self.set_var(var, bool_str, 'bool')
+                    elif symb1.arg_type == 'bool':
+                        bool_str = 'true' if symb1.value == symb2.value else 'false'
+                        self.set_var(var, bool_str, 'bool')
+                    elif symb1.arg_type == 'nil':
+                        bool_str = 'true' if symb1.value == symb2.value else 'false'
+                        self.set_var(var, bool_str, 'bool')
+
+
+                    self.set_var(var, bool_str, 'bool')
+                elif instruction.opcode == 'GT':
+                    bool_str = 'true' if int(symb1.value) > int(symb2.value) else 'false'
+                    self.set_var(var, bool_str, 'bool')
+                elif instruction.opcode == 'EQ':
+                    bool_str = 'true' if symb1.value == symb2.value else 'false'
+                    self.set_var(var, bool_str, 'bool')
+
+
+            elif instruction.opcode == 'INT2FLOAT':
+                var = self.find_arg(instruction.args[0])
+                symb = self.find_arg(instruction.args[1])
+                if symb.arg_type == 'int':
+                    self.set_var(var, float.hex(float(int(symb.value))), 'float')
+                elif symb.arg_type is None:
+                    if DEBUG:
+                        print("Invalid type2 for int2float")
+                    exit(56)
+                else:
+                    if DEBUG:
+                        print("Invalid type for int2float")
+                    exit(53)
+
+            elif instruction.opcode == 'FLOAT2INT':
+                var = self.find_arg(instruction.args[0])
+                symb = self.find_arg(instruction.args[1])
+                if symb.arg_type == 'float':
+                    self.set_var(var, int(float.fromhex(symb.value)), 'int')
+                elif symb.arg_type is None:
+                    if DEBUG:
+                        print("Invalid type2 for float2int")
+                    exit(56)
+                else:
+                    if DEBUG:
+                        print("Invalid type for float2int")
+                        print(symb.arg_type)
+                        print(symb.big_type)
+                    exit(53)
+
+
+
 
             elif instruction.opcode == 'WRITE':
                 symb = self.find_arg(instruction.args[0])
+                #printing all the atributes of an argument
+
                 if symb.value == 'nil':
                     print('', end='')
-                if symb.value is not None:
+                elif symb.arg_type == 'float':
+                    if symb.value =='' or symb.value.isspace():
+                        print('', end='')
+                        break
+                    # if not self.is_hex_string(str(symb.value)):
+                    #     symb.value = float.hex(float(symb.value))
+                    number = float.fromhex(symb.value)
+                    hex_number = float.hex(number)
+                    print(hex_number, end='')
+
+                elif symb.value is not None:
                     print(symb.value, end='')
 
+            elif instruction.opcode == 'DPRINT':
+                symb = self.find_arg(instruction.args[0])
+                sys.stderr.write(symb.value)
 
-
-        #print the defined variables
+        # print the defined variables
         if DEBUG:
             for arg in self.defined_vars:
                 print("debug print:", arg.name, arg.value, arg.arg_type, arg.frame)
+
 
 class Parser:
     def __init__(self):
@@ -228,7 +362,7 @@ class Parser:
         # self.valid_arg_types = ['label', 'var', 'type', 'symb', 'int', 'bool', 'string', 'nil', 'float']
 
     def sort_instructions(self):
-        self.instructions.sort(key=lambda x: x.order)
+        self.instructions.sort(key=lambda x: int(x.order))
 
     def is_valid_order(self, order):
         if order is None:
@@ -365,7 +499,7 @@ def main():
     parser = Parser()
     args = parser.parse_arguments()
     parser.verify_xml(args.source)
-    interpreter = Interpreter(parser,args)
+    interpreter = Interpreter(parser, args)
     interpreter.execute()
 
     if DEBUG:
