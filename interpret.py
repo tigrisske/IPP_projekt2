@@ -89,12 +89,14 @@ class Argument:
 class Interpreter:
     def __init__(self, parser, args):
         self.defined_vars = []
+        self.defined_labels = []
         self.defined_vars_names = []
         self.labels = []
         self.data_stack = []
         self.parser = parser
         self.arithmetic = ['ADD', 'SUB', 'MUL', 'IDIV', 'DIV']
         self.relational = ['LT', 'GT', 'EQ']
+        self.logical = ['AND', 'OR', 'NOT']
         self.input = args.input.split('\n')
         self.read_index = 0
         self.vypis = 1
@@ -147,6 +149,20 @@ class Interpreter:
                 arg.value = value
                 arg.arg_type = value_type
 
+    def check_logical(self, instruction):
+        if instruction.opcode == 'NOT':
+            if not self.find_arg(instruction.args[1]).arg_type == 'bool':
+                if DEBUG:
+                    print("Invalid types for logical operation")
+                    # print names of variables
+                exit(53)
+        elif not (self.find_arg(instruction.args[1]).arg_type == 'bool' and
+                  self.find_arg(instruction.args[2]).arg_type == 'bool'):
+            if DEBUG:
+                print("Invalid types for logical operation")
+                # print names of variables
+            exit(53)
+
     def check_relational(self, instruction):
         if not (self.find_arg(instruction.args[1]).arg_type == 'int' and
                 self.find_arg(instruction.args[2]).arg_type == 'int') and not (
@@ -180,7 +196,10 @@ class Interpreter:
         if DEBUG:
             print("Executing instructions")
 
-        for instruction in self.parser.instructions:
+        instruction_pointer = 0
+        while instruction_pointer < len(self.parser.instructions):
+            instruction = self.parser.instructions[instruction_pointer]
+        # for instruction in self.parser.instructions:
             if instruction.opcode == 'DEFVAR':
                 self.defined_vars_names.append(instruction.args[0].name)
                 self.defined_vars.append(instruction.args[0])
@@ -281,15 +300,111 @@ class Interpreter:
                     elif symb1.arg_type == 'nil':
                         bool_str = 'true' if symb1.value == symb2.value else 'false'
                         self.set_var(var, bool_str, 'bool')
-
-
-                    self.set_var(var, bool_str, 'bool')
                 elif instruction.opcode == 'GT':
                     bool_str = 'true' if int(symb1.value) > int(symb2.value) else 'false'
                     self.set_var(var, bool_str, 'bool')
                 elif instruction.opcode == 'EQ':
                     bool_str = 'true' if symb1.value == symb2.value else 'false'
                     self.set_var(var, bool_str, 'bool')
+
+
+            elif instruction.opcode in self.logical:
+                self.check_logical(instruction)
+                if instruction.opcode == 'NOT':
+                    var = self.find_arg(instruction.args[0])
+                    symb = self.find_arg(instruction.args[1])
+                    # setting var to true if symb is false
+                    if symb.value == 'false':
+                        self.set_var(var, 'true', 'bool')
+                    # setting var to false if symb is true
+                    elif symb.value == 'true':
+                        self.set_var(var, 'false', 'bool')
+                else:
+                    var = self.find_arg(instruction.args[0])
+                    symb1 = self.find_arg(instruction.args[1])
+                    symb2 = self.find_arg(instruction.args[2])
+                    if instruction.opcode == 'AND':
+                        if symb1.value == 'true' and symb2.value == 'true':
+                            self.set_var(var, 'true', 'bool')
+                        else:
+                            self.set_var(var, 'false', 'bool')
+                    elif instruction.opcode == 'OR':
+                        if symb1.value == 'true' or symb2.value == 'true':
+                            self.set_var(var, 'true', 'bool')
+                        else:
+                            self.set_var(var, 'false', 'bool')
+
+            # Instrukce pro řízení toku programu
+            elif instruction.opcode == 'LABEL':
+                label = self.find_arg(instruction.args[0])
+                if label.value in self.defined_labels:
+                    if DEBUG:
+                        print("Label already exists")
+                    exit(52)
+                else:
+                    self.defined_labels.append(label.value)
+
+            elif instruction.opcode == 'JUMP':
+                found = False
+                label = self.find_arg(instruction.args[0])
+                label_string = label.value
+                # find the instruction with the matching label
+                for i in range(0, len(self.parser.instructions)):
+                    if self.parser.instructions[i].opcode == 'LABEL' and self.parser.instructions[i].args[0].value == label_string:
+                        found = True
+                        instruction_pointer = i
+                        break
+                if not found:
+                    if DEBUG:
+                        print("Label not found")
+                    exit(52)
+
+            elif instruction.opcode == 'JUMPIFEQ':
+                label = self.find_arg(instruction.args[0])
+                found = False
+                label_string = label.value
+                symb1 = self.find_arg(instruction.args[1])
+                symb2 = self.find_arg(instruction.args[2])
+                if symb1.arg_type == symb2.arg_type and (symb1.arg_type != 'nil' and symb2.arg_type != 'nil'):
+                    if str(symb1.value) == str(symb2.value):
+                        for i in range(0, len(self.parser.instructions)):
+                            if self.parser.instructions[i].opcode == 'LABEL' and self.parser.instructions[i].args[0].value == label_string:
+                                found = True
+                                instruction_pointer = i
+                                break
+                        if not found:
+                            if DEBUG:
+                                print("Label not found")
+                            exit(52)
+                else:
+                    if DEBUG:
+                        print("Invalid type")
+                    exit(53)
+
+            elif instruction.opcode == 'JUMPIFNEQ':
+                label = self.find_arg(instruction.args[0])
+                found = False
+                label_string = label.value
+                symb1 = self.find_arg(instruction.args[1])
+                symb2 = self.find_arg(instruction.args[2])
+                if symb1.arg_type == symb2.arg_type and (symb1.arg_type != 'nil' and symb2.arg_type != 'nil'):
+                    if str(symb1.value) != str(symb2.value):
+                        for i in range(0, len(self.parser.instructions)):
+                            if self.parser.instructions[i].opcode == 'LABEL' and self.parser.instructions[i].args[0].value == label_string:
+                                found = True
+                                instruction_pointer = i
+                                break
+                        if not found:
+                            if DEBUG:
+                                print("Label not found")
+                            exit(52)
+                else:
+                    if DEBUG:
+                        print("Invalid type")
+                    exit(53)
+
+
+
 
 
             elif instruction.opcode == 'INT2FLOAT':
@@ -327,12 +442,12 @@ class Interpreter:
 
             elif instruction.opcode == 'WRITE':
                 symb = self.find_arg(instruction.args[0])
-                #printing all the atributes of an argument
+                # printing all the atributes of an argument
 
                 if symb.value == 'nil':
                     print('', end='')
                 elif symb.arg_type == 'float':
-                    if symb.value =='' or symb.value.isspace():
+                    if symb.value == '' or symb.value.isspace():
                         print('', end='')
                         break
                     # if not self.is_hex_string(str(symb.value)):
@@ -348,6 +463,7 @@ class Interpreter:
                 symb = self.find_arg(instruction.args[0])
                 sys.stderr.write(symb.value)
 
+            instruction_pointer += 1
         # print the defined variables
         if DEBUG:
             for arg in self.defined_vars:
