@@ -1,3 +1,4 @@
+import copy
 import re
 import sys
 import argparse
@@ -86,6 +87,24 @@ class Argument:
         self.frame = arg_frame
 
 
+class Frame:
+    def __init__(self, parent=None):
+        self.parent = parent
+        self.variables = {}
+
+    def change_tf_to_lf(self):
+        for key, variable in self.variables.items():
+            variable.frame = "LF"
+
+    def change_lf_to_tf(self):
+        for key, variable in self.variables.items():
+            variable.frame = "TF"
+
+    def print_all_vars(self):
+        for key, variable in self.variables.items():
+            print("name:", variable.name, ",value:", variable.value, ",frame:", variable.frame)
+
+
 class Interpreter:
     def __init__(self, parser, args):
         self.defined_vars = []
@@ -99,7 +118,11 @@ class Interpreter:
         self.logical = ['AND', 'OR', 'NOT']
         self.input = args.input.split('\n')
         self.read_index = 0
-        self.vypis = 1
+        self.frames = []
+        self.labels = []
+        self.frames_stack = []
+        self.temporary_frame = None
+        self.stack = []
 
     def is_hex_string(self, s):
         try:
@@ -119,10 +142,60 @@ class Interpreter:
             return argument
         # if var is given, it is searched in defined variables
         for arg in self.defined_vars:
-            if argument.name == arg.name and argument.frame != arg.frame:
+            if argument.frame == 'TF':
+                #   TODO
+
+                if self.temporary_frame is None:
+                    if DEBUG:
+                        print("Wrong frame")
+                    exit(55)
+                for variable in self.temporary_frame.variables.values():
+                    if variable.name == argument.name:
+                        return variable
+
+                if DEBUG:
+                    print("Variable not defined")
+                    print('here this happens')
+                    print(argument.name, self.temporary_frame.variables)
+                exit(55)
+
+
+            if argument.frame == 'LF':
+                if len(self.frames_stack) == 0:
+                    if DEBUG:
+                        print("Wrong frame")
+                    exit(55)
+                for variable in self.frames_stack[-1].variables.values():
+                    if variable.name == argument.name:
+                        return variable
+
+                if DEBUG:
+                    print("Variable not defined")
+                    print(argument.name, self.defined_vars)
                 exit(55)
             if argument.name == arg.name and argument.frame == arg.frame:
                 return arg
+        if DEBUG:
+            print("Variable not defined")
+            print(argument.name, self.defined_vars)
+        exit(54)
+
+        # def find_arg(self, argument):
+        #     # if not var is given, original argument is returned
+        #     if argument.big_type != instructions_map.ArgTypeEnum.VARIABLE:
+        #         return argument
+        #
+        #     # if var is given, it is searched in defined variables
+        #     for arg in self.defined_vars:
+        #         if argument.name == arg.name and argument.frame != arg.frame:
+        #             exit(55)
+        #         if argument.name == arg.name and argument.frame == arg.frame:
+        #             # check if the frame exists
+        #             if arg.frame == "GF" or (arg.frame == "LF" and len(self.frames_stack) > 0):
+        #                 return arg
+        #             else:
+        #                 exit(54)
+
         if DEBUG:
             print("Variable not defined")
             print(argument.name, self.defined_vars)
@@ -199,12 +272,23 @@ class Interpreter:
         instruction_pointer = 0
         while instruction_pointer < len(self.parser.instructions):
             instruction = self.parser.instructions[instruction_pointer]
-        # for instruction in self.parser.instructions:
+
             if instruction.opcode == 'DEFVAR':
+                if instruction.args[0].frame == 'TF':
+                    if self.temporary_frame is None:
+                        if DEBUG:
+                            print("Temporary frame not defined")
+                        exit(55)
+                    self.temporary_frame.variables[instruction.args[0].name] = instruction.args[0]
+                if instruction.args[0].frame == 'LF':
+                    if len(self.frames_stack) == 0:
+                        if DEBUG:
+                            print("Local frame not defined")
+                        exit(55)
                 self.defined_vars_names.append(instruction.args[0].name)
                 self.defined_vars.append(instruction.args[0])
 
-            if instruction.opcode == 'READ':
+            elif instruction.opcode == 'READ':
                 var = self.find_arg(instruction.args[0])
                 typ = self.find_arg(instruction.args[1])
                 input = self.input[self.read_index]
@@ -216,6 +300,84 @@ class Interpreter:
                 var = self.find_arg(instruction.args[0])
                 symb = self.find_arg(instruction.args[1])
                 self.set_var(var, symb.value, symb.arg_type)
+
+            elif instruction.opcode == 'EXIT':
+                symb = self.find_arg(instruction.args[0])
+                if symb.arg_type != 'int':
+                    if DEBUG:
+                        print("Invalid types for exit")
+                    exit(53)
+                value = int(symb.value)
+                if value < 0 or value > 49:
+                    if DEBUG:
+                        print("Invalid value for exit")
+                    exit(57)
+                exit(value)
+
+            elif instruction.opcode == 'CREATEFRAME':
+                self.temporary_frame = None
+                self.temporary_frame = Frame()
+
+            elif instruction.opcode == 'PUSHFRAME':
+
+                # TODO
+                if self.temporary_frame is None:
+                    if DEBUG:
+                        print("Temporary frame not defined")
+                    exit(55)
+                self.temporary_frame.change_tf_to_lf()
+                self.frames_stack.append(copy.deepcopy(self.temporary_frame))
+                self.temporary_frame = None
+            elif instruction.opcode == 'POPFRAME':
+                # TODO
+                if len(self.frames_stack) == 0:
+                    if DEBUG:
+                        print("Stack is empty")
+                    exit(55)
+                self.temporary_frame = self.frames_stack.pop()
+                self.temporary_frame.change_lf_to_tf()
+
+                    # self.frames_stack[-1].print_all_vars()
+
+
+
+
+            elif instruction.opcode == 'CALL':
+                # inplmented jump
+                found = False
+                label = self.find_arg(instruction.args[0])
+                self.labels.append(instruction_pointer)
+                label_string = label.value
+                # find the instruction with the matching label
+                for i in range(0, len(self.parser.instructions)):
+                    if self.parser.instructions[i].opcode == 'LABEL' and \
+                            self.parser.instructions[i].args[0].value == label_string:
+                        found = True
+                        instruction_pointer = i
+                        break
+                if not found:
+                    if DEBUG:
+                        print("Label not found")
+                    exit(52)
+
+            elif instruction.opcode == 'RETURN':
+                if len(self.labels) == 0:
+                    if DEBUG:
+                        print("No label to return to")
+                    exit(56)
+                instruction_pointer = self.labels.pop()
+
+            elif instruction.opcode == 'TYPE':
+                var = self.find_arg(instruction.args[0])
+                symb = self.find_arg(instruction.args[1])
+                if symb.arg_type == 'nil':
+                    self.set_var(var, '', 'string')
+                else:
+                    self.set_var(var, symb.arg_type, 'string')
+
+
+
+
 
             elif instruction.opcode in self.arithmetic:
                 self.check_arithmetic(instruction)
@@ -334,6 +496,64 @@ class Interpreter:
                         else:
                             self.set_var(var, 'false', 'bool')
 
+            elif instruction.opcode == 'PUSHS':
+                symb = self.find_arg(instruction.args[0])
+                self.stack.append(symb)
+
+            elif instruction.opcode == 'POPS':
+                if len(self.stack) == 0:
+                    if DEBUG:
+                        print("Stack is empty")
+                    exit(56)
+
+                var = self.find_arg(instruction.args[0])
+                symb = self.stack.pop()
+                self.set_var(var, symb.value, symb.arg_type)
+
+            elif instruction.opcode == 'INT2CHAR':
+                var = self.find_arg(instruction.args[0])
+                symb = self.find_arg(instruction.args[1])
+                if symb.arg_type != 'int':
+                    if DEBUG:
+                        print("INT2CHAR: symb is not int")
+                    exit(53)
+                try:
+                    char = chr(int(symb.value))
+                except ValueError:
+                    if DEBUG:
+                        print("INT2CHAR: symb is not in range 0-1114111")
+                    exit(58)
+                self.set_var(var, char, 'string')
+
+            elif instruction.opcode == 'STRI2INT':
+                var = self.find_arg(instruction.args[0])
+                symb1 = self.find_arg(instruction.args[1])
+                symb2 = self.find_arg(instruction.args[2])
+                if symb1.arg_type != 'string' or symb2.arg_type != 'int':
+                    if DEBUG:
+                        print("STRI2INT: symb1 or symb2 is not string or int")
+                    exit(53)
+                try:
+                    int_value = ord(symb1.value[int(symb2.value)])
+                except IndexError:
+                    if DEBUG:
+                        print("STRI2INT: index is out of range")
+                    exit(58)
+                self.set_var(var, int_value, 'int')
+
+            elif instruction.opcode == 'BREAK':
+                print("stack:")
+                for i in range(0, len(self.stack)):
+                    print(self.stack[i].value)
+                print("frame stack:")
+                for i in range(0, len(self.frame_stack)):
+                    print(self.frame_stack[i].frame_name)
+
+            elif instruction.opcode == 'DPRINT':
+                symb = self.find_arg(instruction.args[0])
+                print(symb.value, file=sys.stderr)
+
+
             # Instrukce pro řízení toku programu
             elif instruction.opcode == 'LABEL':
                 label = self.find_arg(instruction.args[0])
@@ -350,7 +570,8 @@ class Interpreter:
                 label_string = label.value
                 # find the instruction with the matching label
                 for i in range(0, len(self.parser.instructions)):
-                    if self.parser.instructions[i].opcode == 'LABEL' and self.parser.instructions[i].args[0].value == label_string:
+                    if self.parser.instructions[i].opcode == 'LABEL' and self.parser.instructions[i].args[
+                        0].value == label_string:
                         found = True
                         instruction_pointer = i
                         break
@@ -368,7 +589,8 @@ class Interpreter:
                 if symb1.arg_type == symb2.arg_type and (symb1.arg_type != 'nil' and symb2.arg_type != 'nil'):
                     if str(symb1.value) == str(symb2.value):
                         for i in range(0, len(self.parser.instructions)):
-                            if self.parser.instructions[i].opcode == 'LABEL' and self.parser.instructions[i].args[0].value == label_string:
+                            if self.parser.instructions[i].opcode == 'LABEL' and self.parser.instructions[i].args[
+                                0].value == label_string:
                                 found = True
                                 instruction_pointer = i
                                 break
@@ -390,7 +612,8 @@ class Interpreter:
                 if symb1.arg_type == symb2.arg_type and (symb1.arg_type != 'nil' and symb2.arg_type != 'nil'):
                     if str(symb1.value) != str(symb2.value):
                         for i in range(0, len(self.parser.instructions)):
-                            if self.parser.instructions[i].opcode == 'LABEL' and self.parser.instructions[i].args[0].value == label_string:
+                            if self.parser.instructions[i].opcode == 'LABEL' and self.parser.instructions[i].args[
+                                0].value == label_string:
                                 found = True
                                 instruction_pointer = i
                                 break
@@ -437,33 +660,49 @@ class Interpreter:
                         print(symb.big_type)
                     exit(53)
 
-
+            elif instruction.opcode == 'CONCAT':
+                var = self.find_arg(instruction.args[0])
+                symb1 = self.find_arg(instruction.args[1])
+                symb2 = self.find_arg(instruction.args[2])
+                if symb1.arg_type == 'string' and symb2.arg_type == 'string':
+                    self.set_var(var, symb1.value + symb2.value, 'string')
+                else:
+                    if DEBUG:
+                        print("Invalid type for concat")
+                    exit(53)
 
 
             elif instruction.opcode == 'WRITE':
                 symb = self.find_arg(instruction.args[0])
-                # printing all the atributes of an argument
-
                 if symb.value == 'nil':
                     print('', end='')
                 elif symb.arg_type == 'float':
                     if symb.value == '' or symb.value.isspace():
                         print('', end='')
                         break
-                    # if not self.is_hex_string(str(symb.value)):
-                    #     symb.value = float.hex(float(symb.value))
                     number = float.fromhex(symb.value)
                     hex_number = float.hex(number)
                     print(hex_number, end='')
 
+                elif symb.arg_type == 'string':
+                    if symb.value is not None:
+                        old = symb.value
+                        new_string = old.replace("\\032"," ").replace("\\092","\\").replace("\\035","#").replace("\\010","\\n")
+                        print(str(new_string), end='')
+
                 elif symb.value is not None:
                     print(symb.value, end='')
+
+
+
+
 
             elif instruction.opcode == 'DPRINT':
                 symb = self.find_arg(instruction.args[0])
                 sys.stderr.write(symb.value)
 
             instruction_pointer += 1
+
         # print the defined variables
         if DEBUG:
             for arg in self.defined_vars:
